@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Advanced AR Lane Detector</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    <!-- A-Frame and AR.js -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #000;
+        }
+        
+        #startButton {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 25px 50px;
+            font-size: 24px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 999;
+            transition: all 0.3s;
+        }
+        
+        #startButton:active {
+            transform: translate(-50%, -50%) scale(0.9);
+        }
+        
+        #controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            z-index: 998;
+        }
+        
+        #status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 20px;
+            z-index: 998;
+            min-width: 200px;
+        }
+        
+        #confidenceBar {
+            position: fixed;
+            bottom: 90px;
+            left: 20px;
+            right: 20px;
+            height: 30px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 8px;
+            z-index: 998;
+            overflow: hidden;
+        }
+        
+        #confidence {
+            height: 100%;
+            background: linear-gradient(to right, #ff0000, #ffff00, #00ff00);
+            transition: width 0.3s;
+            width: 0%;
+            display: flex;
+            align-items: center;
+            padding-left: 10px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .setting {
+            margin: 10px 0;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <button id="startButton">Start Advanced AR Detector</button>
+    
+    <div id="controls" class="hidden">
+        <div class="setting">
+            <label>Sensitivity: <span id="sensitivityValue">50%</span></label>
+            <input type="range" id="sensitivity" min="0" max="100" value="50">
+        </div>
+        <div class="setting">
+            <label>Lane Width: <span id="widthValue">Medium</span></label>
+            <input type="range" id="laneWidth" min="1" max="3" value="2" step="0.5">
+        </div>
+    </div>
+    
+    <div id="status" class="hidden">
+        <div>Lane Status: <span id="laneStatus">Detecting...</span></div>
+        <div>Distance: <span id="distance">-</span></div>
+        <div>Angle: <span id="angle">-</span></div>
+    </div>
+    
+    <div id="confidenceBar" class="hidden">
+        <div id="confidence">0%</div>
+    </div>
+    
+    <a-scene 
+        class="hidden"
+        id="arScene"
+        vr-mode-ui="enabled: false"
+        loading-screen="enabled: false"
+        arjs="sourceType: webcam; debugUIEnabled: false;">
+        
+        <a-assets>
+            <a-asset-item id="arrow" src="https://raw.githubusercontent.com/supermedium/superframe/master/components/environment/components/assets/arrow/arrow.obj"></a-asset-item>
+        </a-assets>
+        
+        <a-entity
+            id="arCamera"
+            camera
+            cursor="rayOrigin: mouse"
+            ar-camera="sourceType: webcam; debugUIEnabled: false;">
+        </a-entity>
+        
+        <!-- Enhanced Lane Visualization -->
+        <a-box id="goodLane" 
+               position="0 -1 -3" 
+               width="2" height="0.3" depth="0.1"
+               color="#00FF00" 
+               visible="false"
+               animation__mouseenter="property: rotation; to: 0 5 0; startEvents: mouseenter; dur: 200"
+               animation__mouseleave="property: rotation; to: 0 0 0; startEvents: mouseleave; dur: 200">
+            <a-text value="GOOD LANE" align="center" position="0 0.2 0" color="#FFFFFF"></a-text>
+        </a-box>
+        
+        <a-box id="badLane" 
+               position="0 -1 -3" 
+               width="2" height="0.3" depth="0.1"
+               color="#FF0000" 
+               visible="false"
+               animation__mouseenter="property: rotation; to: 0 5 0; startEvents: mouseenter; dur: 200"
+               animation__mouseleave="property: rotation; to: 0 0 0; startEvents: mouseleave; dur: 200">
+            <a-text value="BAD LANE" align="center" position="0 0.2 0" color="#FFFFFF"></a-text>
+        </a-box>
+        
+        <!-- Lane Edge Markers -->
+        <a-cylinder id="leftMarker"
+                    position="-1 -0.5 -3"
+                    radius="0.05" height="0.8"
+                    color="#00FFFF"
+                    visible="false"
+                    animation="property: rotation; to: 0 360 0; loop: true; dur: 4000">
+        </a-cylinder>
+        
+        <a-cylinder id="rightMarker"
+                    position="1 -0.5 -3"
+                    radius="0.05" height="0.8"
+                    color="#00FFFF"
+                    visible="false"
+                    animation="property: rotation; to: 0 360 0; loop: true; dur: 4000">
+        </a-cylinder>
+        
+        <!-- Distance Indicators -->
+        <a-ring id="distanceCircle"
+                position="0 -1 -3"
+                color="#4CC"
+                radius-inner="1.9"
+                radius-outer="2"
+                visible="false"
+                animation="property: rotation; to: 0 360 0; loop: true; dur: 10000">
+        </a-ring>
+        
+        <!-- Lighting -->
+        <a-light type="ambient" color="#404040"></a-light>
+        <a-light type="point" position="0 5 0" color="#FFFFFF"></a-light>
+    </a-scene>
+    
+    <script>
+        // Get elements
+        const startButton = document.getElementById('startButton');
+        const arScene = document.getElementById('arScene');
+        const controls = document.getElementById('controls');
+        const status = document.getElementById('status');
+        const goodLane = document.getElementById('goodLane');
+        const badLane = document.getElementById('badLane');
+        const leftMarker = document.getElementById('leftMarker');
+        const rightMarker = document.getElementById('rightMarker');
+        const distanceCircle = document.getElementById('distanceCircle');
+        const confidenceBar = document.getElementById('confidenceBar');
+        const confidence = document.getElementById('confidence');
+        const sensitivityInput = document.getElementById('sensitivity');
+        const laneWidthInput = document.getElementById('laneWidth');
+        
+        let isDetecting = false;
+        let video;
+        let canvas;
+        let sensitivity = 0.5;
+        let laneWidth = 2;
+        
+        // Event Listeners
+        startButton.addEventListener('click', startAR);
+        sensitivityInput.addEventListener('input', updateSensitivity);
+        laneWidthInput.addEventListener('input', updateLaneWidth);
+        
+        function updateSensitivity() {
+            sensitivity = parseFloat(sensitivityInput.value) / 100;
+            document.getElementById('sensitivityValue').textContent = sensitivityInput.value + '%';
+        }
+        
+        function updateLaneWidth() {
+            laneWidth = parseFloat(laneWidthInput.value);
+            document.getElementById('widthValue').textContent = 
+                laneWidth === 1 ? 'Narrow' : 
+                laneWidth === 2 ? 'Medium' : 'Wide';
+        }
+        
+        function startAR() {
+            startButton.classList.add('hidden');
+            arScene.classList.remove('hidden');
+            controls.classList.remove('hidden');
+            status.classList.remove('hidden');
+            confidenceBar.classList.remove('hidden');
+            
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: false 
+            }).then(stream => {
+                video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+                
+                video.onloadedmetadata = () => {
+                    canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startDetection();
+                };
+            }).catch(err => {
+                document.getElementById('status').innerHTML = "Camera Error: " + err.message;
+            });
+        }
+        
+        function startDetection() {
+            function detect() {
+                if (!isDetecting) {
+                    isDetecting = true;
+                    
+                    const context = canvas.getContext('2d');
+                    context.drawImage(video, 0, 0);
+                    
+                    // Enhanced detection
+                    const quality = detectLaneQualityEnhanced(context);
+                    
+                    // Update AR with more features
+                    updateEnhancedAR(quality);
+                    
+                    isDetecting = false;
+                }
+                requestAnimationFrame(detect);
+            }
+            detect();
+        }
+        
+        function detectLaneQualityEnhanced(context) {
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            let whitePixels = 0;
+            let edgePixels = 0;
+            let totalPixels = 0;
+            let leftBoundary = canvas.width;
+            let rightBoundary = 0;
+            
+            // Enhanced detection with edge detection
+            for (let y = canvas.height * 0.4; y < canvas.height * 0.9; y += 3) {
+                for (let x = 0; x < canvas.width; x += 3) {
+                    const idx = (y * canvas.width + x) * 4;
+                    const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+                    
+                    // Detect bright pixels
+                    if (brightness > 180) {
+                        whitePixels++;
+                        if (x < leftBoundary) leftBoundary = x;
+                        if (x > rightBoundary) rightBoundary = x;
+                    }
+                    
+                    // Simple edge detection
+                    if (x > 0 && x < canvas.width - 1) {
+                        const gradientX = Math.abs(
+                            brightness - 
+                            (data[idx - 4] + data[idx - 3] + data[idx - 2]) / 3
+                        );
+                        if (gradientX > 30) edgePixels++;
+                    }
+                    
+                    totalPixels++;
+                }
+            }
+            
+            const ratio = whitePixels / totalPixels;
+            const edgeRatio = edgePixels / totalPixels;
+            const adjustedThreshold = 0.1 + (sensitivity - 0.5) * 0.1;
+            const isGood = ratio > adjustedThreshold && edgeRatio > 0.02;
+            
+            // Calculate lane metrics
+            const laneWidthPixels = Math.abs(rightBoundary - leftBoundary);
+            const estimatedDistance = (laneWidth / (laneWidthPixels / canvas.width)) * 3; // Rough estimate
+            const centerOffset = ((leftBoundary + rightBoundary) / 2 - canvas.width / 2) / canvas.width;
+            const angle = Math.atan(centerOffset) * (180 / Math.PI);
+            
+            return {
+                isGood: isGood,
+                confidence: Math.round(ratio * 100),
+                ratio: ratio,
+                distance: estimatedDistance.toFixed(1),
+                angle: angle.toFixed(1),
+                edgeStrength: edgeRatio
+            };
+        }
+        
+        function updateEnhancedAR(quality) {
+            // Update status with more info
+            document.getElementById('laneStatus').textContent = quality.isGood ? 'GOOD' : 'BAD';
+            document.getElementById('laneStatus').style.color = quality.isGood ? '#00FF00' : '#FF0000';
+            document.getElementById('distance').textContent = quality.distance + 'm';
+            document.getElementById('angle').textContent = quality.angle + '°';
+            
+            // Update confidence bar
+            confidence.style.width = quality.confidence + '%';
+            confidence.textContent = quality.confidence + '%';
+            
+            // Update 3D visualization
+            if (quality.isGood) {
+                goodLane.setAttribute('visible', true);
+                badLane.setAttribute('visible', false);
+                leftMarker.setAttribute('color', '#00FF00');
+                rightMarker.setAttribute('color', '#00FF00');
+            } else {
+                goodLane.setAttribute('visible', false);
+                badLane.setAttribute('visible', true);
+                leftMarker.setAttribute('color', '#FF0000');
+                rightMarker.setAttribute('color', '#FF0000');
+            }
+            
+            // Show lane markers
+            leftMarker.setAttribute('visible', true);
+            rightMarker.setAttribute('visible', true);
+            
+            // Update distance circle based on detection
+            if (quality.distance > 5) {
+                distanceCircle.setAttribute('visible', false);
+            } else {
+                distanceCircle.setAttribute('visible', true);
+                distanceCircle.setAttribute('position', `0 -1 -${quality.distance}`);
+            }
+            
+            // Adjust indicator positions
+            const angleOffset = quality.angle / 30; // Convert angle to position offset
+            goodLane.setAttribute('position', `${angleOffset} -1 -3`);
+            badLane.setAttribute('position', `${angleOffset} -1 -3`);
+            
+            // Update lane width visualization
+            goodLane.setAttribute('width', laneWidth * 2);
+            badLane.setAttribute('width', laneWidth * 2);
+            leftMarker.setAttribute('position', `${-laneWidth} -0.5 -3`);
+            rightMarker.setAttribute('position', `${laneWidth} -0.5 -3`);
+            
+            // Add pulsing effect for better visibility
+            if (quality.confidence > 70) {
+                const pulse = `property: components.material.material.color; 
+                               to: ${quality.isGood ? '#00AA00' : '#AA0000'}; 
+                               dir: alternate; 
+                               dur: 500; 
+                               loop: true; 
+                               easing: easeInOutSine`;
+                goodLane.setAttribute('animation__pulse', pulse);
+                badLane.setAttribute('animation__pulse', pulse);
+            }
+        }
+        
+        // Add touch-to-focus functionality
+        arScene.addEventListener('touchstart', () => {
+            goodLane.setAttribute('scale', '1.2 1.2 1.2');
+            badLane.setAttribute('scale', '1.2 1.2 1.2');
+            setTimeout(() => {
+                goodLane.setAttribute('scale', '1 1 1');
+                badLane.setAttribute('scale', '1 1 1');
+            }, 300);
+        });
+    </script>
+</body>
+</html>
