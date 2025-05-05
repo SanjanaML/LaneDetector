@@ -2,27 +2,17 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>AR Lane Detector Debug</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AR Lane Detector - Fixed</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
     
-    <!-- A-Frame and AR.js -->
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
+    <!-- A-Frame -->
+    <script src="https://aframe.io/releases/1.0.4/aframe.min.js"></script>
     
     <style>
-        body { margin: 0; font-family: Arial, sans-serif; }
-        
-        #debugInfo {
-            position: fixed;
-            bottom: 100px;
-            left: 20px;
-            background: rgba(0,0,0,0.8);
-            color: white;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 14px;
-            z-index: 999;
-            display: none;
+        body { 
+            margin: 0; 
+            font-family: Arial, sans-serif;
+            overflow: hidden;
         }
         
         #startButton {
@@ -40,9 +30,9 @@
             z-index: 999;
         }
         
-        #status {
+        #laneInfo {
             position: fixed;
-            top: 40px;
+            top: 20px;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0,0,0,0.8);
@@ -51,159 +41,197 @@
             border-radius: 8px;
             font-size: 24px;
             z-index: 998;
+            text-align: center;
             display: none;
         }
         
-        .hidden { display: none; }
+        #cameraPreview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            object-fit: cover;
+            display: none;
+        }
+        
+        #arContainer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <button id="startButton">Start AR Lane Detector</button>
     
-    <div id="status" class="hidden">
+    <video id="cameraPreview" autoplay playsinline muted></video>
+    
+    <div id="arContainer">
+        <a-scene id="arScene" 
+                 embedded 
+                 vr-mode-ui="enabled: false"
+                 background="transparent: true">
+            
+            <a-sky color="rgba(0,0,0,0)"></a-sky>
+            
+            <a-camera active="true" 
+                      look-controls="false" 
+                      cursor="rayOrigin: mouse"
+                      position="0 0 0">
+            </a-camera>
+            
+            <!-- Lane indicators -->
+            <a-box id="goodLane" 
+                   position="0 0 -2" 
+                   width="3" height="0.5" depth="0.2"
+                   color="#00FF00" 
+                   opacity="0.9"
+                   visible="false">
+                <a-text value="GOOD LANE" 
+                        align="center" 
+                        position="0 0.3 0" 
+                        color="#FFFFFF" 
+                        width="10">
+                </a-text>
+            </a-box>
+            
+            <a-box id="badLane" 
+                   position="0 0 -2" 
+                   width="3" height="0.5" depth="0.2"
+                   color="#FF0000" 
+                   opacity="0.9"
+                   visible="false">
+                <a-text value="BAD LANE" 
+                        align="center" 
+                        position="0 0.3 0" 
+                        color="#FFFFFF" 
+                        width="10">
+                </a-text>
+            </a-box>
+            
+            <!-- Lighting -->
+            <a-light type="ambient" color="#FFFFFF"></a-light>
+            <a-light type="point" intensity="0.5" position="0 2 0"></a-light>
+        </a-scene>
+    </div>
+    
+    <div id="laneInfo">
         Lane Status: <span id="laneStatus">Scanning...</span>
     </div>
     
-    <div id="debugInfo" class="hidden">
-        Processing: <span id="processingCount">0</span><br>
-        Pixels: <span id="pixelInfo">-</span><br>
-        Ratio: <span id="ratioInfo">-</span>
-    </div>
-    
-    <a-scene id="arScene" class="hidden" 
-             embedded arjs="sourceType: webcam; debugUIEnabled: false;" 
-             vr-mode-ui="enabled: false" 
-             gesture-detector>
-        
-        <a-camera gps-camera rotation-reader id="camera"></a-camera>
-        
-        <!-- Bigger, more visible indicators -->
-        <a-box id="goodLane" 
-               position="0 0 -2" 
-               width="3" height="0.5" depth="0.1"
-               color="#00FF00" 
-               opacity="0.8"
-               visible="false">
-            <a-text value="GOOD" align="center" position="0 0.3 0" color="#FFFFFF" scale="3 3 3"></a-text>
-        </a-box>
-        
-        <a-box id="badLane" 
-               position="0 0 -2" 
-               width="3" height="0.5" depth="0.1"
-               color="#FF0000" 
-               opacity="0.8"
-               visible="false">
-            <a-text value="BAD" align="center" position="0 0.3 0" color="#FFFFFF" scale="3 3 3"></a-text>
-        </a-box>
-    </a-scene>
-    
     <script>
-        let isProcessing = false;
-        let video;
-        let canvas;
-        let processCount = 0;
-        
-        // Element references
         const startButton = document.getElementById('startButton');
-        const arScene = document.getElementById('arScene');
-        const status = document.getElementById('status');
+        const cameraPreview = document.getElementById('cameraPreview');
+        const arContainer = document.getElementById('arContainer');
+        const laneInfo = document.getElementById('laneInfo');
         const goodLane = document.getElementById('goodLane');
         const badLane = document.getElementById('badLane');
-        const debugInfo = document.getElementById('debugInfo');
         
-        startButton.addEventListener('click', startAR);
+        let video;
+        let canvas;
+        let isDetecting = false;
         
-        function startAR() {
-            startButton.classList.add('hidden');
+        startButton.addEventListener('click', startCamera);
+        
+        function startCamera() {
+            startButton.style.display = 'none';
             
-            navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment' },
-                audio: false 
-            })
-            .then(stream => {
-                video = document.createElement('video');
-                video.srcObject = stream;
-                video.autoplay = true;
-                video.playsInline = true;
-                
-                // Debug: wait for video to start
-                video.onloadeddata = () => {
-                    console.log('Video loaded');
-                    arScene.classList.remove('hidden');
-                    status.classList.remove('hidden');
-                    debugInfo.classList.remove('hidden');
+            const constraints = {
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                },
+                audio: false
+            };
+            
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    // Display camera preview
+                    cameraPreview.srcObject = stream;
+                    cameraPreview.style.display = 'block';
                     
-                    canvas = document.createElement('canvas');
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    
-                    // Start simple detection
-                    startSimpleDetection();
-                };
-            })
-            .catch(err => {
-                console.error('Camera error:', err);
-                alert('Camera error: ' + err.message);
-            });
+                    // Wait for camera to start
+                    cameraPreview.onloadedmetadata = () => {
+                        // Show AR overlay
+                        arContainer.style.display = 'block';
+                        laneInfo.style.display = 'block';
+                        
+                        // Create canvas for processing
+                        canvas = document.createElement('canvas');
+                        canvas.width = cameraPreview.videoWidth;
+                        canvas.height = cameraPreview.videoHeight;
+                        
+                        // Start detection
+                        startDetection();
+                    };
+                })
+                .catch(err => {
+                    alert('Camera error: ' + err.message);
+                    startButton.style.display = 'block';
+                });
         }
         
-        function startSimpleDetection() {
-            setInterval(() => {
-                if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
-                    simpleDetect();
+        function startDetection() {
+            isDetecting = true;
+            
+            function detect() {
+                if (isDetecting && cameraPreview.readyState === cameraPreview.HAVE_ENOUGH_DATA) {
+                    const context = canvas.getContext('2d');
+                    context.drawImage(cameraPreview, 0, 0);
+                    
+                    const quality = analyzeLane(context);
+                    updateDisplay(quality);
                 }
-            }, 200); // Check more frequently
+                
+                requestAnimationFrame(detect);
+            }
+            
+            detect();
         }
         
-        function simpleDetect() {
-            if (isProcessing) return;
-            isProcessing = true;
-            
-            const context = canvas.getContext('2d');
-            context.drawImage(video, 0, 0);
-            
+        function analyzeLane(context) {
             const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
             const data = imageData.data;
             
-            let whiteCount = 0;
-            let totalCount = 0;
+            let whitePixels = 0;
+            let totalPixels = 0;
             
-            // Very simple detection - just check average brightness
-            for (let i = 0; i < data.length; i += 4) {
-                const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
-                if (brightness > 150) { // Lower threshold
-                    whiteCount++;
+            // Check bottom half for bright areas
+            for (let y = Math.floor(canvas.height / 2); y < canvas.height; y += 4) {
+                for (let x = 0; x < canvas.width; x += 4) {
+                    const i = (y * canvas.width + x) * 4;
+                    const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
+                    
+                    if (brightness > 150) whitePixels++;
+                    totalPixels++;
                 }
-                totalCount++;
             }
             
-            const ratio = whiteCount / totalCount;
-            const isGood = ratio > 0.05; // Very low threshold for testing
+            const ratio = whitePixels / totalPixels;
+            const isGood = ratio > 0.1;
             
-            // Update debug info
-            processCount++;
-            document.getElementById('processingCount').textContent = processCount;
-            document.getElementById('pixelInfo').textContent = `${whiteCount}/${totalCount}`;
-            document.getElementById('ratioInfo').textContent = ratio.toFixed(3);
-            
-            // Update display
-            document.getElementById('laneStatus').textContent = isGood ? 'GOOD' : 'BAD';
-            document.getElementById('laneStatus').style.color = isGood ? '#00FF00' : '#FF0000';
-            
-            goodLane.setAttribute('visible', isGood);
-            badLane.setAttribute('visible', !isGood);
-            
-            isProcessing = false;
+            return {
+                isGood: isGood,
+                ratio: ratio
+            };
         }
         
-        // Test with debug logs
-        console.log('Script loaded');
-        
-        // Add click detector to test AR scene
-        arScene.addEventListener('click', () => {
-            console.log('AR scene clicked');
-            alert('AR scene is working!');
-        });
+        function updateDisplay(quality) {
+            // Update text
+            document.getElementById('laneStatus').textContent = quality.isGood ? 'GOOD' : 'BAD';
+            document.getElementById('laneStatus').style.color = quality.isGood ? '#00FF00' : '#FF0000';
+            
+            // Update 3D indicators
+            goodLane.setAttribute('visible', quality.isGood);
+            badLane.setAttribute('visible', !quality.isGood);
+        }
     </script>
 </body>
 </html>
